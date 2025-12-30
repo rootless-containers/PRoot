@@ -807,7 +807,7 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 			word_t input;
 			char guestpath[PATH_MAX];
 			int dirfd = AT_FDCWD;
-			if (sysnum == PR_fstatat64 || sysnum == PR_newfstatat) {
+			if (sysnum == PR_fstatat64 || sysnum == PR_newfstatat || sysnum == PR_statx) {
 				dirfd = peek_reg(tracee, ORIGINAL, SYSARG_1);
 				input = peek_reg(tracee, ORIGINAL, SYSARG_2);
 				status = read_path(tracee, guestpath, input);
@@ -827,9 +827,9 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 		// error is not critical, typically. e.g. ENOATTR
 		if (status >= 0) {
 			if (uid_xattr != (uid_t)-1)
-				poke_uint32(tracee, address + offsetof_stat_uid(tracee), uid_xattr);
+				poke_uint32(tracee, address + uid_offset, uid_xattr);
 			if (gid_xattr != (gid_t)-1)
-				poke_uint32(tracee, address + offsetof_stat_gid(tracee), gid_xattr);
+				poke_uint32(tracee, address + gid_offset, gid_xattr);
 		}
 #endif
 
