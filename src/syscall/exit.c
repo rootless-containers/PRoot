@@ -232,7 +232,8 @@ void translate_syscall_exit(Tracee *tracee)
 		break;
 
 	case PR_rename:
-	case PR_renameat: {
+	case PR_renameat:
+	case PR_renameat2: {
 		char old_path[PATH_MAX];
 		char new_path[PATH_MAX];
 		ssize_t old_length;
@@ -435,12 +436,16 @@ void translate_syscall_exit(Tracee *tracee)
 		break;
 
 	case PR_wait4:
-	case PR_waitpid:
+	case PR_waitpid: {
+		bool set_result = true;
 		if (tracee->as_ptracer.waits_in != WAITS_IN_PROOT)
 			goto end;
 
-		status = translate_wait_exit(tracee);
+		status = translate_wait_exit(tracee, &set_result);
+		if (!set_result)
+			goto end;
 		break;
+	}
 
 	case PR_setrlimit:
 	case PR_prlimit64:

@@ -58,7 +58,7 @@
 #define user_fpregs_struct user_fpsimd_struct
 #endif
 
-static const char *stringify_ptrace(enum __ptrace_request request)
+static const char *stringify_ptrace(PTRACE_REQUEST_TYPE request)
 {
 #define CASE_STR(a) case a: return #a; break;
 	switch ((int) request) {
@@ -258,6 +258,13 @@ int translate_ptrace_exit(Tracee *tracee)
 		break;  /* Restart the ptracee.  */
 
 	case PTRACE_SETOPTIONS:
+		if (data & PTRACE_O_TRACESECCOMP) {
+			/* We don't really support forwarding seccomp traps */
+			note(ptracer, WARNING, INTERNAL,
+			     "ptrace option PTRACE_O_TRACESECCOMP "
+			     "not supported yet");
+			return -EINVAL;
+		}
 		PTRACEE.options = data;
 		return 0;  /* Don't restart the ptracee.  */
 

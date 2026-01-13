@@ -45,6 +45,10 @@
 
 #include "compat.h"
 
+#ifndef __W_STOPCODE
+#define __W_STOPCODE(sig)	((sig) <<8 | 0x7f)
+#endif
+
 typedef LIST_HEAD(tracees, tracee) Tracees;
 static Tracees tracees;
 
@@ -239,7 +243,7 @@ static Tracee *new_tracee(pid_t pid)
  * wait(2) manual for the meaning of @wait_options.  This function
  * returns NULL if there's no such ptracee.
  */
-static Tracee *get_ptracee(const Tracee *ptracer, pid_t pid, bool only_stopped,
+Tracee *get_ptracee(const Tracee *ptracer, pid_t pid, bool only_stopped,
 			bool only_with_pevent, word_t wait_options)
 {
 	Tracee *ptracee;
@@ -428,6 +432,7 @@ int new_child(Tracee *parent, word_t clone_flags)
 	child->verbose = parent->verbose;
 	child->seccomp = parent->seccomp;
 	child->sysexit_pending = parent->sysexit_pending;
+	child->restart_how = parent->restart_how;
 
 	/* If CLONE_VM is set, the calling process and the child
 	 * process run in the same memory space [...] any memory

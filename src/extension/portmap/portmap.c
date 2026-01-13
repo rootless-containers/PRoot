@@ -4,11 +4,11 @@
 
 #include <stdint.h>         /* intptr_t, */
 #include <stdlib.h>         /* strtoul(3), */
+#include <string.h>			/* memset */
 #include <sys/un.h>         /* strncpy */
 #include <sys/socket.h>	    /* AF_UNIX, AF_INET */
 #include <arpa/inet.h>      /* inet_ntop */
 #include <linux/net.h>   	/* SYS_*, */
-
 #include "cli/note.h"
 #include "extension/extension.h"
 #include "tracee/mem.h"     /* read_data */
@@ -107,7 +107,7 @@ int prepare_getsockname_chained_syscall(Tracee *tracee, Config *config, word_t s
 	if(size_addr == 0)
 		return -EFAULT;
 
-	bzero(&sockaddr, sizeof(sockaddr));
+	memset(&sockaddr, '\0', sizeof(sockaddr));
 
 	/* we write the modified socket in this new address */
 	status = write_data(tracee, sock_addr, &sockaddr, sizeof(sockaddr));
@@ -170,7 +170,7 @@ int translate_port(Tracee *tracee, Config *config, word_t sockfd, word_t *sock_a
 		return 0;
 		
 	/* Essential step, we clean the structure before adding data to it */
-	bzero(&sockaddr, sizeof(sockaddr));
+	memset(&sockaddr, '\0', sizeof(sockaddr));
 
 	/* Next, we read the socket address structure from the tracee's memory */
 	status = read_data(tracee, &sockaddr, *sock_addr, size);
@@ -363,7 +363,7 @@ int add_changed_port_as_entry(Tracee *tracee, Config *config, word_t sockfd, wor
 		return -result;
 
 	/* Essential step, we clean the structure before adding data to it */
-	bzero(&sockaddr, sizeof(sockaddr));
+	memset(&sockaddr, '\0', sizeof(sockaddr));
 
 	/* Next, we read the socket address structure from the tracee's memory */
 	status = read_data(tracee, &sockaddr, sock_addr, sizeof(sockaddr));
@@ -446,8 +446,14 @@ static int handle_syschained_exit(Tracee *tracee, Config *config)
 	case PR_getsockname:{
 		word_t sockfd, sock_addr;
 		int result;
-	
-		sockfd = peek_reg(tracee, CURRENT, SYSARG_1);
+
+		// On AArch64 and ARM, SYSARG_1 is the same as SYSARG_RESULT (r0/x0)
+		// so `peek_reg(tracee, CURRENT, SYSARG_1)` would have returned
+		// the result of the syscall instead.
+		// Since the chained call is currently only used for syscall with
+		// `sockfd` as the first argument, we can just use
+		// the ORIGINAL version to get the fd.
+		sockfd = peek_reg(tracee, ORIGINAL, SYSARG_1);
 		sock_addr = peek_reg(tracee, CURRENT, SYSARG_2);
 		result = peek_reg(tracee, CURRENT, SYSARG_RESULT);
 	
