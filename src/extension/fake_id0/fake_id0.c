@@ -204,6 +204,7 @@ static FilteredSysnum filtered_sysnums[] = {
 	{ PR_lsetxattr,		FILTER_SYSEXIT },
 	{ PR_fsetxattr,		FILTER_SYSEXIT },
 	{ PR_stat,		FILTER_SYSEXIT },
+	{ PR_statx,		FILTER_SYSEXIT },
 	{ PR_stat64,		FILTER_SYSEXIT },
 	{ PR_statfs,		FILTER_SYSEXIT },
 	{ PR_statfs64,		FILTER_SYSEXIT },
@@ -280,6 +281,7 @@ static void override_permissions(const Tracee *tracee, const char *path, bool is
 		case PR_oldlstat:
 		case PR_oldstat:
 		case PR_stat:
+		case PR_statx:
 		case PR_stat64:
 		case PR_statfs:
 		case PR_statfs64:
@@ -434,7 +436,7 @@ static int handle_sysenter_end(Tracee *tracee, const Config *config)
  * Copy config->@field to the tracee's memory location pointed to by @sysarg.
  */
 #define POKE_MEM_ID(sysarg, field) do {					\
-	poke_uint16(tracee, peek_reg(tracee, ORIGINAL, sysarg), config->field);	\
+	poke_uint32(tracee, peek_reg(tracee, ORIGINAL, sysarg), config->field);	\
 	if (errno != 0)							\
 		return -errno;						\
 } while (0)
@@ -739,12 +741,15 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 	case PR_lstat64:
 	case PR_fstat64:
 	case PR_stat:
+	case PR_statx:
 	case PR_lstat:
 	case PR_fstat: {
 		word_t address;
 		Reg sysarg;
 		uid_t uid;
 		gid_t gid;
+		off_t uid_offset;
+		off_t gid_offset;
 #if defined(PERSISTENT_CHOWN)
 		int status;
 		char path[PATH_MAX];
@@ -760,10 +765,19 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 			return 0;
 
 		/* Get the address of the 'stat' structure.  */
-		if (sysnum == PR_fstatat64 || sysnum == PR_newfstatat)
-			sysarg = SYSARG_3;
-		else
-			sysarg = SYSARG_2;
+		if (sysnum == PR_statx) {
+			sysarg = SYSARG_5;
+			uid_offset = OFFSETOF_STATX_UID;
+			gid_offset = OFFSETOF_STATX_GID;
+		}
+		else {
+			if (sysnum == PR_fstatat64 || sysnum == PR_newfstatat)
+				sysarg = SYSARG_3;
+			else
+				sysarg = SYSARG_2;
+			uid_offset = offsetof_stat_uid(tracee);
+			gid_offset = offsetof_stat_gid(tracee);
+		}
 
 		address = peek_reg(tracee, ORIGINAL, sysarg);
 
@@ -772,28 +786,28 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 		assert(__builtin_types_compatible_p(gid_t, uint32_t));
 
 		/* Get the uid & gid values from the 'stat' structure.  */
-		uid = peek_uint32(tracee, address + offsetof_stat_uid(tracee));
+		uid = peek_uint32(tracee, address + uid_offset);
 		if (errno != 0)
 			uid = 0; /* Not fatal.  */
 
-		gid = peek_uint32(tracee, address + offsetof_stat_gid(tracee));
+		gid = peek_uint32(tracee, address + gid_offset);
 		if (errno != 0)
 			gid = 0; /* Not fatal.  */
 
 		/* Override only if the file is owned by the current user.
 		 * Errors are not fatal here.  */
 		if (uid == getuid())
-			poke_uint32(tracee, address + offsetof_stat_uid(tracee), config->suid);
+			poke_uint32(tracee, address + uid_offset, config->suid);
 
 		if (gid == getgid())
-			poke_uint32(tracee, address + offsetof_stat_gid(tracee), config->sgid);
+			poke_uint32(tracee, address + gid_offset, config->sgid);
 
 #if defined(PERSISTENT_CHOWN)
 		if (with_path) {
 			word_t input;
 			char guestpath[PATH_MAX];
 			int dirfd = AT_FDCWD;
-			if (sysnum == PR_fstatat64 || sysnum == PR_newfstatat) {
+			if (sysnum == PR_fstatat64 || sysnum == PR_newfstatat || sysnum == PR_statx) {
 				dirfd = peek_reg(tracee, ORIGINAL, SYSARG_1);
 				input = peek_reg(tracee, ORIGINAL, SYSARG_2);
 				status = read_path(tracee, guestpath, input);
@@ -813,9 +827,9 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 		// error is not critical, typically. e.g. ENOATTR
 		if (status >= 0) {
 			if (uid_xattr != (uid_t)-1)
-				poke_uint32(tracee, address + offsetof_stat_uid(tracee), uid_xattr);
+				poke_uint32(tracee, address + uid_offset, uid_xattr);
 			if (gid_xattr != (gid_t)-1)
-				poke_uint32(tracee, address + offsetof_stat_gid(tracee), gid_xattr);
+				poke_uint32(tracee, address + gid_offset, gid_xattr);
 		}
 #endif
 
@@ -824,10 +838,7 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 
 	case PR_chroot: {
 		char path[PATH_MAX];
-		char path_translated[PATH_MAX];
-		char path_translated_absolute[PATH_MAX];
-		char root_translated[PATH_MAX];
-		char root_translated_absolute[PATH_MAX];
+		char abspath[PATH_MAX];
 		word_t input;
 		int status;
 
@@ -841,24 +852,16 @@ static int handle_sysexit_end(Tracee *tracee, Config *config)
 
 		input = peek_reg(tracee, MODIFIED, SYSARG_1);
 
-		// path can be relative
 		status = read_path(tracee, path, input);
 		if (status < 0)
 			return status;
 
-		// weird: translate(".") returns "/." rather than "/", when cwd is "/"
-		status = translate_path(tracee, path_translated, AT_FDCWD, path, false);
-		if (status < 0)
-			return status;
-		realpath(path_translated, path_translated_absolute);
-
-		status = translate_path(tracee, root_translated, AT_FDCWD, get_root(tracee), false);
-		if (status < 0)
-			return status;
-		realpath(root_translated, root_translated_absolute);
+		/* Resolve relative path segments. */
+		if (!realpath(path, abspath))
+			return 0;
 
 		/* Only "new rootfs == current rootfs" is supported yet.  */
-		status = compare_paths(root_translated_absolute, path_translated_absolute);
+		status = compare_paths(get_root(tracee), abspath);
 		if (status != PATHS_ARE_EQUAL)
 			return 0;
 

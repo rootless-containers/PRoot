@@ -30,9 +30,15 @@
 #include <sys/ptrace.h>/* enum __ptrace_request */
 #include <talloc.h>    /* talloc_*, */
 #include <stdint.h>    /* *int*_t, */
-
+#include <sys/wait.h>  /* __WAIT_* */
 #include "arch.h" /* word_t, user_regs_struct, */
 #include "compat.h"
+
+#if defined(__GLIBC__)
+#define PTRACE_REQUEST_TYPE	enum __ptrace_request
+#else
+#define PTRACE_REQUEST_TYPE	int
+#endif
 
 typedef enum {
 	CURRENT  = 0,
@@ -147,7 +153,7 @@ typedef struct tracee {
 				     && get_sysnum((tracee), ORIGINAL) == sysnum)
 
 	/* How this tracee is restarted.  */
-	enum __ptrace_request restart_how;
+	PTRACE_REQUEST_TYPE restart_how;
 
 	/* Value of the tracee's general purpose registers.  */
 	struct user_regs_struct _regs[NB_REG_VERSION];
@@ -198,6 +204,8 @@ typedef struct tracee {
 	 * execve sysexit.  */
 	struct load_info *load_info;
 
+	/* Disable mixed-execution (native host) check */
+	bool mixed_mode;
 
 	/**********************************************************************
 	 * Private but inherited resources                                    *
@@ -268,6 +276,8 @@ typedef struct tracee {
 #define TRACEE(a) talloc_get_type_abort(talloc_parent(talloc_parent(a)), Tracee)
 
 extern Tracee *get_tracee(const Tracee *tracee, pid_t pid, bool create);
+extern Tracee *get_ptracee(const Tracee *ptracer, pid_t pid, bool only_stopped,
+			bool only_with_pevent, word_t wait_options);
 extern Tracee *get_stopped_ptracee(const Tracee *ptracer, pid_t pid,
 				bool only_with_pevent, word_t wait_options);
 extern bool has_ptracees(const Tracee *ptracer, pid_t pid, word_t wait_options);

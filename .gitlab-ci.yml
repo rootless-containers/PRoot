@@ -1,0 +1,71 @@
+image: gcc:7.4.0
+
+stages:
+  - check
+  - dist
+  - coverage
+  - static-analysis
+  - deploy
+
+before_script:
+  - apt-get update -qq
+  - apt-get install -qq clang-tools-6.0 curl docutils-common gdb lcov libarchive-dev libtalloc-dev strace swig uthash-dev xsltproc
+
+check:
+  stage: check
+  script: 
+    - make -C src proot care
+    - timeout --signal=SIGKILL 5m make -C test
+  allow_failure: true
+
+dist:
+  stage: dist
+  script:
+    - LDFLAGS="${LDFLAGS} -static" make -C src proot GIT=false
+  after_script:
+    - mkdir -p dist
+    - cp src/proot dist/
+    - cd dist
+    - sha256sum ./proot > proot.sha256sum
+    - md5sum ./proot > proot.md5sum
+  artifacts:
+    paths:
+      - dist
+
+gcov:
+  stage: coverage
+  script:
+    - /bin/sh ./util/coverage.sh
+  artifacts:
+    paths:
+      - gcov-latest
+
+scan-build:
+  stage: static-analysis
+  script:
+    - scan-build-6.0 make -C src proot
+  after_script:
+    - cp -R /tmp/scan-build-* scan-build-latest
+  artifacts:
+    paths:
+      - scan-build-latest
+
+pages:
+  stage: deploy
+  script:
+    - /bin/sh ./util/dist.sh
+  dependencies:
+    - dist
+    - gcov
+    - scan-build
+  artifacts:
+    paths:
+      - public
+
+site:
+  stage: deploy
+  script:
+    - /bin/sh ./util/site.sh
+  only:
+    - master
+  allow_failure: true

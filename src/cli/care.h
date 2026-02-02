@@ -6,7 +6,7 @@
 #include "cli/cli.h"
 
 #ifndef VERSION
-#define VERSION "2.2"
+#define VERSION "2.3.0"
 #endif
 
 #define CARE_MAX_SIZE 1024
@@ -73,7 +73,7 @@ static Cli care_cli = {
 	.subtitle = "Comprehensive Archiver for Reproducible Execution",
 	.synopsis = "care [option] ... command",
 	.colophon = "Visit https://proot-me.github.io for help, bug reports, suggestions, patches, ...\n\
-Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
+Copyright (C) 2021 PRoot Developers, licensed under GPL v2 or later.",
 	.logo = "\
   _____ ____ _____ ____\n\
  /   __/ __ |  __ \\  __|\n\

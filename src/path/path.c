@@ -282,7 +282,7 @@ void chop_finality(char *path)
 
 /**
  * Put in @path the result of readlink(/proc/@pid/fd/@fd).  This
- * function returns -errno if an error occured, othrwise 0.
+ * function returns -errno if an error occured, otherwise 0.
  */
 int readlink_proc_pid_fd(pid_t pid, int fd, char path[PATH_MAX])
 {
@@ -384,6 +384,11 @@ int translate_path(Tracee *tracee, char result[PATH_MAX], int dir_fd,
 skip:
 	VERBOSE(tracee, 2, "vpid %" PRIu64 ":          -> \"%s\"",
 		tracee != NULL ? tracee->vpid : 0, result);
+
+	status = notify_extensions(tracee, TRANSLATED_PATH, (intptr_t) result, 0);
+	if (status < 0)
+		return status;
+
 	return 0;
 }
 
@@ -652,6 +657,7 @@ static int list_open_fd_callback(const Tracee *tracee, int fd, char path[PATH_MA
 {
 	VERBOSE(tracee, 1, "pid %d: access to \"%s\" (fd %d) won't be translated until closed",
 		tracee->pid, path, fd);
+	notify_extensions((Tracee*)tracee, ALREADY_OPENED_FD, (intptr_t)path, (intptr_t)fd);
 	return 0;
 }
 

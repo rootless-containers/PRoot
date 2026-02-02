@@ -26,7 +26,8 @@
 #include <linux/net.h>   /* SYS_*, */
 #include <fcntl.h>       /* AT_FDCWD, */
 #include <limits.h>      /* PATH_MAX, */
-
+#include <string.h>      /* strcpy */
+#include <sys/prctl.h>   /* PR_SET_DUMPABLE */
 #include "syscall/syscall.h"
 #include "syscall/sysnum.h"
 #include "syscall/socket.h"
@@ -393,7 +394,9 @@ int translate_syscall_enter(Tracee *tracee)
 	case PR_fchownat:
 	case PR_fstatat64:
 	case PR_newfstatat:
+	case PR_statx:
 	case PR_utimensat:
+	case PR_utimensat_time64:
 	case PR_name_to_handle_at:
 		dirfd = peek_reg(tracee, CURRENT, SYSARG_1);
 
@@ -404,7 +407,9 @@ int translate_syscall_enter(Tracee *tracee)
 		flags = (  syscall_number == PR_fchownat
 			|| syscall_number == PR_name_to_handle_at)
 			? peek_reg(tracee, CURRENT, SYSARG_5)
-			: peek_reg(tracee, CURRENT, SYSARG_4);
+			: ((syscall_number == PR_statx) ?
+			   peek_reg(tracee, CURRENT, SYSARG_3) :
+			   peek_reg(tracee, CURRENT, SYSARG_4));
 
 		if ((flags & AT_SYMLINK_NOFOLLOW) != 0)
 			status = translate_path2(tracee, dirfd, path, SYSARG_2, SYMLINK);
@@ -414,6 +419,7 @@ int translate_syscall_enter(Tracee *tracee)
 
 	case PR_fchmodat:
 	case PR_faccessat:
+	case PR_faccessat2:
 	case PR_futimesat:
 	case PR_mknodat:
 		dirfd = peek_reg(tracee, CURRENT, SYSARG_1);
@@ -533,6 +539,7 @@ int translate_syscall_enter(Tracee *tracee)
 		break;
 
 	case PR_renameat:
+	case PR_renameat2:
 		olddirfd = peek_reg(tracee, CURRENT, SYSARG_1);
 		newdirfd = peek_reg(tracee, CURRENT, SYSARG_3);
 
@@ -563,6 +570,15 @@ int translate_syscall_enter(Tracee *tracee)
 			break;
 
 		status = translate_path2(tracee, newdirfd, newpath, SYSARG_3, SYMLINK);
+		break;
+
+	case PR_prctl:
+		/* Prevent tracees from setting dumpable flag.
+		 * (Otherwise it could break tracee memory access)  */
+		if (peek_reg(tracee, CURRENT, SYSARG_1) == PR_SET_DUMPABLE) {
+			set_sysnum(tracee, PR_void);
+			status = 0;
+		}
 		break;
 	}
 

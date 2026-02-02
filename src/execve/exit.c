@@ -223,10 +223,9 @@ static int transfer_load_script(Tracee *tracee)
 			: strlen(tracee->load_info->raw_path) + 1);
 
 	/* A padding will be appended at the end of the load script
-	 * (a.k.a "strings area") to ensure this latter is aligned to
-	 * a word boundary, for sake of performance.  */
+	 * (a.k.a "strings area") to ensure this latter is aligned properly. */
 	padding_size = (stack_pointer - string1_size - string2_size - string3_size)
-			% sizeof_word(tracee);
+			% STACK_ALIGNMENT;
 
 	strings_size = string1_size + string2_size + string3_size + padding_size;
 	string1_address = stack_pointer - strings_size;
@@ -459,8 +458,17 @@ void translate_execve_exit(Tracee *tracee)
 		talloc_set_name_const(tracee->exe, "$exe");
 	}
 
-	/* New processes have no heap.  */
-	bzero(tracee->heap, sizeof(Heap));
+	/* New processes have no heap. The process could've been cloned with
+	 * CLONE_VM so it has been sharing the heap with its parent. execve()
+	 * discards the VM so make sure to reallocate new heap. */
+	if (talloc_reference_count(tracee->heap) > 0) {
+		talloc_unlink(tracee, tracee->heap);
+		tracee->heap = talloc_zero(tracee, Heap);
+		if (!tracee->heap)
+			note(tracee, ERROR, INTERNAL, "can't allocate heap");
+	} else {
+		bzero(tracee->heap, sizeof(Heap));
+	}
 
 	/* Transfer the load script to the loader.  */
 	status = transfer_load_script(tracee);

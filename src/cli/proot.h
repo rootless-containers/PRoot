@@ -6,7 +6,7 @@
 #include "cli/cli.h"
 
 #ifndef VERSION
-#define VERSION "5.1.0"
+#define VERSION "5.4.0"
 #endif
 
 static const char *recommended_bindings[] = {
@@ -51,6 +51,7 @@ static const char *recommended_su_bindings[] = {
 static int handle_option_r(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_b(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_q(Tracee *tracee, const Cli *cli, const char *value);
+static int handle_option_mixed_mode(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_w(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_v(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_V(Tracee *tracee, const Cli *cli, const char *value);
@@ -60,6 +61,10 @@ static int handle_option_0(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_i(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_p(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_n(Tracee *tracee, const Cli *cli, const char *value);
+#ifdef HAVE_PYTHON_EXTENSION
+static int handle_option_P(Tracee *tracee, const Cli *cli, const char *value);
+#endif
+static int handle_option_l(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_R(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_S(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_kill_on_exit(Tracee *tracee, const Cli *cli, const char *value);
@@ -72,8 +77,8 @@ static Cli proot_cli = {
 	.name     = "proot",
 	.subtitle = "chroot, mount --bind, and binfmt_misc without privilege/setup",
 	.synopsis = "proot [option] ... [command]",
-	.colophon = "Visit http://proot.me for help, bug reports, suggestions, patchs, ...\n\
-Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
+	.colophon = "Visit https://proot-me.github.io for help, bug reports, suggestions, patches, ...\n\
+Copyright (C) 2023 PRoot Developers, licensed under GPL v2 or later.",
 	.logo = "\
  _____ _____              ___\n\
 |  __ \\  __ \\_____  _____|   |_\n\
@@ -133,6 +138,15 @@ Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
 \temulated by QEMU user-mode.  The native execution of host programs\n\
 \tis still effective and the whole host rootfs is bound to\n\
 \t/host-rootfs in the guest environment.",
+	},
+	{ .class = "Regular options",
+	  .arguments = {
+		{ .name = "--mixed-mode", .separator = ' ', .value = "value" },
+		{ .name = NULL, .separator = '\0', .value = NULL } },
+	  .handler = handle_option_mixed_mode,
+	  .description = "Disable the mixed-execution feature.",
+	  .detail = "\tDo not treat ELF executables specially when they appear to be\n\
+\tnative executables of the host system.",
 	},
 	{ .class = "Regular options",
 	  .arguments = {
@@ -260,6 +274,27 @@ Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
 \tto run multiple instances of a same program without worrying about the same ports\n\
 \tbeing used twice.",
 	},
+#ifdef HAVE_PYTHON_EXTENSION
+	{ .class = "Extension options",
+	  .arguments = {
+		{ .name = "-P", .separator = ' ', .value = "string" },
+		{ .name = NULL, .separator = '\0', .value = NULL } },
+	  .handler = handle_option_P,
+	  .description = "Allow to access tracee information from python (experimental).",
+	  .detail = "\tThis option allow to launch a python script as an extension (experimental).",
+	},
+#endif
+	{ .class = "Extension options",
+	  .arguments = {
+		{ .name = "-l", .separator = '\0', .value = NULL },
+		{ .name = "--link2symlink", .separator = '\0', .value = NULL },
+		{ .name = NULL, .separator = '\0', .value = NULL } },
+	  .handler = handle_option_l,
+	  .description = "Enable the link2symlink extension.",
+	  .detail = "\tThis extension causes proot to create a symlink when a hardlink\n\
+\tshould be created. Some environments don't let the user create a hardlink, this\n\
+\toption should be used to fix it.",
+	},
 	{ .class = "Alias options",
 	  .arguments = {
 		{ .name = "-R", .separator = ' ', .value = "path" },
@@ -300,7 +335,7 @@ Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
 	  .handler = handle_option_S,
 	  .description = "Alias: -0 -r *path* + a couple of recommended -b.",
 	  .detail = "\tThis option is useful to safely create and install packages into\n\
-\tthe guest rootfs.  It is similar to the -R option expect it\n\
+\tthe guest rootfs.  It is similar to the -R option except it\n\
 \tenables the -0 option and binds only the following minimal set\n\
 \tof paths to avoid unexpected changes on host files:\n\
 \t\n\

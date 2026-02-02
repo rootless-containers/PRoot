@@ -35,6 +35,7 @@
 #include <stdlib.h>     /* atexit(3), getenv(3), */
 #include <talloc.h>     /* talloc_*, */
 #include <inttypes.h>   /* PRI*, */
+#include <linux/version.h> /* KERNEL_VERSION, */
 
 #include "tracee/event.h"
 #include "cli/note.h"
@@ -62,8 +63,7 @@ int launch_process(Tracee *tracee, char *const argv[])
 
 	/* Warn about open file descriptors. They won't be
 	 * translated until they are closed. */
-	if (tracee->verbose > 0)
-		list_open_fd(tracee);
+	list_open_fd(tracee);
 
 	pid = fork();
 	switch(pid) {
@@ -210,23 +210,27 @@ static int last_exit_status = -1;
 /**
  * Check if kernel >= 4.8
  */
-bool is_kernel_4_8(void) {
-        static int version_48 = -1;
-        static int major = 0;
-        static int minor = 0;
+static bool is_kernel_4_8(void)
+{
+	static int version_48 = -1;
+	int major = 0;
+	int minor = 0;
 
 	if (version_48 != -1)
 		return version_48;
 
-        version_48 = false;
+	version_48 = false;
+
 	struct utsname utsname;
+
 	if (uname(&utsname) < 0)
 		return false;
 
 	sscanf(utsname.release, "%d.%d", &major, &minor);
-	if (major >= 4)
-		if (minor >= 8)
-			version_48 = true;
+
+	if ((major == 4 && minor >= 8) || major > 4)
+		version_48 = true;
+
 	return version_48;
 }
 
@@ -267,8 +271,7 @@ static void check_architecture(Tracee *tracee)
 		return;
 
 	note(tracee, INFO, USER,
-		"Get a 64-bit version that supports 32-bit binaries here: "
-		"http://static.proot.me/proot-x86_64");
+		"A 64-bit version that supports 32-bit binaries is required");
 }
 
 /**
@@ -280,9 +283,6 @@ int event_loop()
 	struct sigaction signal_action;
 	long status;
 	int signum;
-	int kernel_4_8;
-
-	kernel_4_8 = is_kernel_4_8();
 
 	/* Kill all tracees when exiting.  */
 	status = atexit(kill_all_tracees);
@@ -366,6 +366,9 @@ int event_loop()
 
 		tracee->running = false;
 
+		VERBOSE(tracee, 6, "vpid %" PRIu64 ": got event %x",
+			tracee->vpid, tracee_status);
+
 		status = notify_extensions(tracee, NEW_STATUS, tracee_status, 0);
 		if (status != 0)
 			continue;
@@ -376,12 +379,7 @@ int event_loop()
 				continue;
 		}
 
-                if (kernel_4_8) {
-		     signal = handle_tracee_event_kernel_4_8(tracee, tracee_status);
-		}
-		else {
-		     signal = handle_tracee_event(tracee, tracee_status);
-		}
+		signal = handle_tracee_event(tracee, tracee_status);
 		(void) restart_tracee(tracee, signal);
 	}
 
@@ -394,7 +392,7 @@ int event_loop()
  * This function returns the "computed" signal that should be used to
  * restart the given @tracee.
  */
-int handle_tracee_event_kernel_4_8(Tracee *tracee, int tracee_status)
+static int handle_tracee_event_kernel_4_8(Tracee *tracee, int tracee_status)
 {
 	static bool seccomp_detected = false;
 	static bool seccomp_enabled = false; /* added for 4.8.0 */
@@ -430,7 +428,7 @@ int handle_tracee_event_kernel_4_8(Tracee *tracee, int tracee_status)
 	}
 	else if (WIFSIGNALED(tracee_status)) {
 		check_architecture(tracee);
-		VERBOSE(tracee, (int) (last_exit_status != -1),
+		VERBOSE(tracee, 1,
 			"vpid %" PRIu64 ": terminated with signal %d",
 			tracee->vpid, WTERMSIG(tracee_status));
 		terminate_tracee(tracee);
@@ -488,37 +486,36 @@ int handle_tracee_event_kernel_4_8(Tracee *tracee, int tracee_status)
 		case SIGTRAP | PTRACE_EVENT_SECCOMP2 << 8:
 		case SIGTRAP | PTRACE_EVENT_SECCOMP << 8:
 
-                	if (!seccomp_detected && seccomp_enabled) {
+			if (!seccomp_detected && seccomp_enabled) {
 				VERBOSE(tracee, 1, "ptrace acceleration (seccomp mode 2) enabled");
 				tracee->seccomp = ENABLED;
 				seccomp_detected = true;
 			}
 
 			if (signal == (SIGTRAP | PTRACE_EVENT_SECCOMP2 << 8) ||
-                            signal == (SIGTRAP | PTRACE_EVENT_SECCOMP << 8)) {
+			    signal == (SIGTRAP | PTRACE_EVENT_SECCOMP << 8)) {
 
 				unsigned long flags = 0;
 				signal = 0;
-	
-				/* SECCOMP TRAP can only be received for
- 				 * sysenter events, ignore otherwise */
-				if (!IS_IN_SYSENTER(tracee)) {
+
+				/* Use the common ptrace flow if seccomp was
+				 * explicitly disabled for this tracee.  */
+				if (tracee->seccomp != ENABLED)
+					break;
+
+				status = ptrace(PTRACE_GETEVENTMSG, tracee->pid, NULL, &flags);
+				if (status < 0)
+					break;
+
+				if ((flags & FILTER_SYSEXIT) == 0) {
 					tracee->restart_how = PTRACE_CONT;
-					return 0;
-                               	}
-                                status = ptrace(PTRACE_GETEVENTMSG, tracee->pid, NULL, &flags);
-                                if (status < 0)
-                                        break;
+					translate_syscall(tracee);
 
-                                    if (tracee->seccomp == ENABLED && (flags & FILTER_SYSEXIT) == 0) {
-                        		tracee->restart_how = PTRACE_CONT;
-                        		translate_syscall(tracee);
-
-                        		if (tracee->seccomp == DISABLING)
-                                		tracee->restart_how = PTRACE_SYSCALL;
-                        		break;
-                                    }
-                	}
+					if (tracee->seccomp == DISABLING)
+						tracee->restart_how = PTRACE_SYSCALL;
+					break;
+				}
+			}
 
 			/* Fall through. */
 		case SIGTRAP | 0x80:
@@ -528,7 +525,7 @@ int handle_tracee_event_kernel_4_8(Tracee *tracee, int tracee_status)
 			/* This tracee got signaled then freed during the
 			   sysenter stage but the kernel reports the sysexit
 			   stage; just discard this spurious tracee/event.  */
-                        
+
 			if (tracee->exe == NULL) {
 				tracee->restart_how = PTRACE_CONT; /* SYSCALL OR CONT */
 				return 0;
@@ -629,6 +626,8 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
 	long status;
 	int signal;
 
+	if (is_kernel_4_8())
+		return handle_tracee_event_kernel_4_8(tracee, tracee_status);
 	/* Don't overwrite restart_how if it is explicitly set
 	 * elsewhere, i.e in the ptrace emulation when single
 	 * stepping.  */
@@ -658,7 +657,7 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
 	}
 	else if (WIFSIGNALED(tracee_status)) {
 		check_architecture(tracee);
-		VERBOSE(tracee, (int) (last_exit_status != -1),
+		VERBOSE(tracee, 1,
 			"vpid %" PRIu64 ": terminated with signal %d",
 			tracee->vpid, WTERMSIG(tracee_status));
 		terminate_tracee(tracee);
@@ -707,6 +706,7 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
 				}
 			}
 		}
+
 			/* Fall through. */
 		case SIGTRAP | 0x80:
 			signal = 0;
@@ -715,7 +715,7 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
 			   sysenter stage but the kernel reports the sysexit
 			   stage; just discard this spurious tracee/event.  */
 			if (tracee->exe == NULL) {
-				tracee->restart_how = PTRACE_CONT;
+				tracee->restart_how = PTRACE_CONT; /* SYSCALL OR CONT */
 				return 0;
 			}
 
@@ -861,6 +861,9 @@ bool restart_tracee(Tracee *tracee, int signal)
 	status = ptrace(tracee->restart_how, tracee->pid, NULL, signal);
 	if (status < 0)
 		return false; /* The process likely died in a syscall.  */
+
+	VERBOSE(tracee, 6, "vpid %" PRIu64 ": restarted using %d, signal %d",
+		tracee->vpid, tracee->restart_how, signal);
 
 	tracee->restart_how = 0;
 	tracee->running = true;
