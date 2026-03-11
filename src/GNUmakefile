@@ -26,6 +26,8 @@ CPPFLAGS += -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -I. -I$(VPATH) -I$(VPATH)/../li
 ifdef PERSISTENT_CHOWN
 	CPPFLAGS += -DPERSISTENT_CHOWN
 	CPPFLAGS += $(shell pkg-config --cflags libprotobuf-c)
+	HAS_ATTR_XATTR := $(shell if [ -f /usr/include/attr/xattr.h ]; then echo -DHAS_ATTR_XATTR; fi)
+	CPPFLAGS += ${HAS_ATTR_XATTR}
 endif
 CFLAGS   += -g -Wall -Wextra -O2
 CFLAGS   += $(shell pkg-config --cflags talloc)
