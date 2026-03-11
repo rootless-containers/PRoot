@@ -46,7 +46,11 @@
 
 #if defined(PERSISTENT_CHOWN)
 #include <unistd.h>
+#if defined(HAS_ATTR_XATTR)
 #include <attr/xattr.h>
+#else
+#include <sys/xattr.h>
+#endif
 #include "path/path.h"
 #include "rootlesscontainers/rootlesscontainers.pb-c.h"
 #define XATTR_USER_ROOTLESSCONTAINERS "user.rootlesscontainers"
