@@ -420,13 +420,17 @@ static int handle_tracee_event_kernel_4_8(Tracee *tracee, int tracee_status)
 	signal = 0;
 
 	if (WIFEXITED(tracee_status)) {
-		last_exit_status = WEXITSTATUS(tracee_status);
+		int exit_status = WEXITSTATUS(tracee_status);
 		VERBOSE(tracee, 1,
 			"vpid %" PRIu64 ": exited with status %d",
-			tracee->vpid, last_exit_status);
+			tracee->vpid, exit_status);
 		terminate_tracee(tracee);
+		// Avoid overwriting a failure exit code with a success
+		if ((exit_status != 0) || (last_exit_status < 0))
+			last_exit_status = exit_status;
 	}
 	else if (WIFSIGNALED(tracee_status)) {
+		last_exit_status = 128 + WTERMSIG(tracee_status);
 		check_architecture(tracee);
 		VERBOSE(tracee, 1,
 			"vpid %" PRIu64 ": terminated with signal %d",
@@ -649,13 +653,17 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
 	signal = 0;
 
 	if (WIFEXITED(tracee_status)) {
-		last_exit_status = WEXITSTATUS(tracee_status);
+		int exit_status = WEXITSTATUS(tracee_status);
 		VERBOSE(tracee, 1,
 			"vpid %" PRIu64 ": exited with status %d",
-			tracee->vpid, last_exit_status);
+			tracee->vpid, exit_status);
 		terminate_tracee(tracee);
+		// Avoid overwriting a failure exit code with a success
+		if ((exit_status != 0) || (last_exit_status < 0))
+			last_exit_status = exit_status;
 	}
 	else if (WIFSIGNALED(tracee_status)) {
+		last_exit_status = 128 + WTERMSIG(tracee_status);
 		check_architecture(tracee);
 		VERBOSE(tracee, 1,
 			"vpid %" PRIu64 ": terminated with signal %d",
