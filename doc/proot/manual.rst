@@ -6,8 +6,8 @@
 ``chroot``, ``mount --bind``, and ``binfmt_misc`` without privilege/setup
 -------------------------------------------------------------------------
 
-:Date: 2023-05-13
-:Version: 5.4.0
+:Date: 2026-10-02
+:Version: 5.5.0
 :Manual section: 1
 
 
@@ -61,6 +61,11 @@ if they were "normal" host programs.
 
 .. _CARE: https://proot-me.github.io/care
 
+Project Status Tags
+====================
+[ACTIVE] — The project is actively maintained or has recent contributions as of the documentation date.
+
+[OUTDATED] — The project hasn’t been updated or contributed to for a long time and may be incompatible with current systems.
 
 Options
 =======
@@ -532,7 +537,7 @@ are typically bound (see ``-R`` option for details).
 
 * http://distfiles.gentoo.org/releases
 
-* http://cdimage.ubuntu.com/ubuntu-core
+* http://cdimage.ubuntu.com/ubuntu-base
 
 * https://archlinuxarm.org/about/downloads
 
@@ -561,29 +566,29 @@ Projects using PRoot or CARE
 * CARE_: archive material used during an execution to make it
   reproducible on any Linux system.
 
-* `Debian noroot
+* `[OUTDATED] Debian noroot
   <https://play.google.com/store/apps/details?id=com.cuntubuntu>`_:
   use Debian Linux on Android without root access.
 
-* `GNURoot
-  <https://play.google.com/store/apps/details?id=champion.gnuroot>`_:
+* `[OUTDATED] GNURoot
+  <https://github.com/corbinlc/GNURootDebian>`_:
   use several Linux distros on Android without root access.
 
-* `JuNest <http://fsquillace.github.io/junest-site>`_:
+* `JuNest <https://github.com/fsquillace/junest>`_:
   use Arch Linux on any Linux distros without root access.
 
-* `OPAM2Debian <https://forge.ocamlcore.org/projects/opam2debian>`_:
+* `[OUTDATED] OPAM2Debian <https://github.com/gildor478/opam2debian>`_:
   create Debian packages which contains a fully compiled OPAM
   installation.
 
-* `OpenMOLE <https://www.openmole.org>`_:
+* `OpenMOLE <https://github.com/openmole/openmole>`_:
   execute programs on distributed computing environments.
 
-* `Polysquare Travis Container
+* `[OUTDATED] Polysquare Travis Container
   <https://github.com/polysquare/polysquare-travis-container>`_:
   use several Linux distros on Travis-CI without root access.
 
-* `Portable PyPy <https://github.com/squeaky-pl/portable-pypy>`_:
+* `[OUTDATED] Portable PyPy <https://github.com/squeaky-pl/portable-pypy>`_:
   portable 32 and 64 bit x86 PyPy binaries.
 
 * `SIO Workers <http://sioworkers.readthedocs.org/en/latest>`_:
@@ -603,7 +608,7 @@ Binaries from the Downloads_ section are likely more up-to-date.
 
 * `Gentoo <http://packages.gentoo.org/package/sys-apps/proot>`_
 
-* `NixOS <https://github.com/NixOS/nixpkgs/tree/master/pkgs/tools/system/proot>`_
+* `NixOS <https://mynixos.com/nixpkgs/package/proot>`_
 
 * `Termux <https://wiki.termux.com/wiki/PRoot>`_
 
@@ -646,7 +651,7 @@ Public material about PRoot or CARE
   QUF'11
 
 * tutorial "`How to install nix in home (on another distribution)
-  <https://nixos.wiki/wiki/Nix_Installation_Guide#PRoot>`_"
+  <https://wiki.nixos.org/wiki/Nix_Installation_Guide#PRoot>`_"
 
 
 Companies using PRoot or CARE internally

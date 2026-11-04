@@ -1,16 +1,21 @@
-FROM proot-me/proot:debian
+FROM ghcr.io/proot-me/proot:debian
 
-RUN apt update && \
-    apt install -y \
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      check \
       curl \
       docutils-common \
       git \
       libarchive-dev \
+      libprotobuf-c-dev \
       libtalloc-dev \
       make \
+      pkg-config \
       sloccount \
       strace \
       swig \
       uthash-dev \
       xsltproc
 
+USER proot

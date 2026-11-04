@@ -20,10 +20,12 @@
  * 02110-1301 USA.
  */
 
-#include <errno.h>       /* errno(3), E* */
-#include <sys/utsname.h> /* struct utsname, */
-#include <linux/net.h>   /* SYS_*, */
-#include <string.h>      /* strlen(3), */
+#include <errno.h>		/* errno(3), E* */
+#include <sys/param.h>		/* MIN(), */
+#include <sys/utsname.h>	/* struct utsname, */
+#include <linux/net.h>		/* SYS_*, */
+#include <string.h>		/* strlen(3), */
+#include <unistd.h>		/* readlink(2), */
 
 #include "syscall/syscall.h"
 #include "syscall/sysnum.h"
@@ -32,6 +34,7 @@
 #include "syscall/heap.h"
 #include "syscall/rlimit.h"
 #include "execve/execve.h"
+#include "execve/auxv.h"
 #include "tracee/tracee.h"
 #include "tracee/reg.h"
 #include "tracee/mem.h"
@@ -50,97 +53,99 @@
  */
 void translate_syscall_exit(Tracee *tracee)
 {
-	word_t syscall_number;
-	word_t syscall_result;
-	int status;
+    word_t syscall_number;
+    word_t syscall_result;
+    int status;
 
-	status = notify_extensions(tracee, SYSCALL_EXIT_START, 0, 0);
-	if (status < 0) {
-		poke_reg(tracee, SYSARG_RESULT, (word_t) status);
-		goto end;
-	}
-	if (status > 0)
-		return;
+    status = notify_extensions(tracee, SYSCALL_EXIT_START, 0, 0);
+    if (status < 0) {
+	poke_reg(tracee, SYSARG_RESULT, (word_t) status);
+	goto end;
+    }
+    if (status > 0)
+	return;
 
-	/* Set the tracee's errno if an error occured previously during
-	 * the translation. */
-	if (tracee->status < 0) {
-		poke_reg(tracee, SYSARG_RESULT, (word_t) tracee->status);
-		goto end;
-	}
+    /* Set the tracee's errno if an error occured previously during
+     * the translation. */
+    if (tracee->status < 0) {
+	poke_reg(tracee, SYSARG_RESULT, (word_t) tracee->status);
+	goto end;
+    }
 
-	/* Translate output arguments:
-	 * - break: update the syscall result register with "status"
-	 * - goto end: nothing else to do.
-	 */
-	syscall_number = get_sysnum(tracee, ORIGINAL);
-	syscall_result = peek_reg(tracee, CURRENT, SYSARG_RESULT);
-	switch (syscall_number) {
-	case PR_brk:
-		translate_brk_exit(tracee);
-		goto end;
+    /* Translate output arguments:
+     * - break: update the syscall result register with "status"
+     * - goto end: nothing else to do.
+     */
+    syscall_number = get_sysnum(tracee, ORIGINAL);
+    syscall_result = peek_reg(tracee, CURRENT, SYSARG_RESULT);
+    switch (syscall_number) {
+    case PR_brk:
+	translate_brk_exit(tracee);
+	goto end;
 
-	case PR_getcwd: {
-		char path[PATH_MAX];
-		size_t new_size;
-		size_t size;
-		word_t output;
+    case PR_getcwd:{
+	    char path[PATH_MAX];
+	    size_t new_size;
+	    size_t size;
+	    word_t output;
 
-		size = (size_t) peek_reg(tracee, ORIGINAL, SYSARG_2);
-		if (size == 0) {
-			status = -EINVAL;
-			break;
-		}
-
-		/* Ensure cwd still exists.  */
-		status = translate_path(tracee, path, AT_FDCWD, ".", false);
-		if (status < 0)
-			break;
-
-		new_size = strlen(tracee->fs->cwd) + 1;
-		if (size < new_size) {
-			status = -ERANGE;
-			break;
-		}
-
-		/* Overwrite the path.  */
-		output = peek_reg(tracee, ORIGINAL, SYSARG_1);
-		status = write_data(tracee, output, tracee->fs->cwd, new_size);
-		if (status < 0)
-			break;
-
-		/* The value of "status" is used to update the returned value
-		 * in translate_syscall_exit().  */
-		status = new_size;
+	    size = (size_t) peek_reg(tracee, ORIGINAL, SYSARG_2);
+	    if (size == 0) {
+		status = -EINVAL;
 		break;
+	    }
+
+	    /* Ensure cwd still exists.  */
+	    status = translate_path(tracee, path, AT_FDCWD, ".", false);
+	    if (status < 0)
+		break;
+
+	    new_size = strlen(tracee->fs->cwd) + 1;
+	    if (size < new_size) {
+		status = -ERANGE;
+		break;
+	    }
+
+	    /* Overwrite the path.  */
+	    output = peek_reg(tracee, ORIGINAL, SYSARG_1);
+	    status = write_data(tracee, output, tracee->fs->cwd, new_size);
+	    if (status < 0)
+		break;
+
+	    /* The value of "status" is used to update the returned value
+	     * in translate_syscall_exit().  */
+	    status = new_size;
+	    break;
 	}
 
-	case PR_accept:
-	case PR_accept4:
-		/* Nothing special to do if no sockaddr was specified.  */
-		if (peek_reg(tracee, ORIGINAL, SYSARG_2) == 0)
-			goto end;
-		/* Fall through.  */
-	case PR_getsockname:
-	case PR_getpeername: {
-		word_t sock_addr;
-		word_t size_addr;
-		word_t max_size;
+    case PR_accept:
+    case PR_accept4:
+	/* Nothing special to do if no sockaddr was specified.  */
+	if (peek_reg(tracee, ORIGINAL, SYSARG_2) == 0)
+	    goto end;
+	/* Fall through.  */
+    case PR_getsockname:
+    case PR_getpeername:{
+	    word_t sock_addr;
+	    word_t size_addr;
+	    word_t max_size;
 
-		/* Error reported by the kernel.  */
-		if ((int) syscall_result < 0)
-			goto end;
-
-		sock_addr = peek_reg(tracee, ORIGINAL, SYSARG_2);
-		size_addr = peek_reg(tracee, MODIFIED, SYSARG_3);
-		max_size  = peek_reg(tracee, MODIFIED, SYSARG_6);
-
-		status = translate_socketcall_exit(tracee, sock_addr, size_addr, max_size);
-		if (status < 0)
-			break;
-
-		/* Don't overwrite the syscall result.  */
+	    /* Error reported by the kernel.  */
+	    if ((int) syscall_result < 0)
 		goto end;
+
+	    sock_addr = peek_reg(tracee, ORIGINAL, SYSARG_2);
+	    size_addr = peek_reg(tracee, MODIFIED, SYSARG_3);
+	    max_size = peek_reg(tracee, MODIFIED, SYSARG_6);
+
+	    status =
+		translate_socketcall_exit(tracee, sock_addr,
+					  size_addr, max_size);
+	    if (status < 0)
+		break;
+
+	    /* Don't overwrite the syscall result.  */
+	    goto end;
 	}
 
 #define SYSARG_ADDR(n) (args_addr + ((n) - 1) * sizeof_word(tracee))
@@ -159,315 +164,383 @@ void translate_syscall_exit(Tracee *tracee)
 		break;				\
 	}
 
-	case PR_socketcall: {
-		word_t args_addr;
-		word_t sock_addr;
-		word_t size_addr;
-		word_t max_size;
+    case PR_socketcall:{
+	    word_t args_addr;
+	    word_t sock_addr;
+	    word_t size_addr;
+	    word_t max_size;
 
-		args_addr = peek_reg(tracee, ORIGINAL, SYSARG_2);
+	    args_addr = peek_reg(tracee, ORIGINAL, SYSARG_2);
 
-		switch (peek_reg(tracee, ORIGINAL, SYSARG_1)) {
-		case SYS_ACCEPT:
-		case SYS_ACCEPT4:
-			/* Nothing special to do if no sockaddr was specified.  */
-			sock_addr = PEEK_WORD(SYSARG_ADDR(2));
-			if (sock_addr == 0)
-				goto end;
-			/* Fall through.  */
-		case SYS_GETSOCKNAME:
-		case SYS_GETPEERNAME:
-			/* Handle these cases below.  */
-			status = 1;
-			break;
-
-		case SYS_BIND:
-		case SYS_CONNECT:
-			/* Restore the initial parameters: this memory was
-			 * overwritten at the enter stage.  Remember: POKE_WORD
-			 * puts -errno in status and breaks if an error
-			 * occured.  */
-			POKE_WORD(SYSARG_ADDR(2), peek_reg(tracee, MODIFIED, SYSARG_5));
-			POKE_WORD(SYSARG_ADDR(3), peek_reg(tracee, MODIFIED, SYSARG_6));
-
-			status = 0;
-			break;
-
-		default:
-			status = 0;
-			break;
-		}
-
-		/* Error reported by the kernel or there's nothing else to do.  */
-		if ((int) syscall_result < 0 || status == 0)
-			goto end;
-
-		/* An error occured in SYS_BIND or SYS_CONNECT.  */
-		if (status < 0)
-			break;
-
-		/* Remember: PEEK_WORD puts -errno in status and breaks if an
-		 * error occured.  */
+	    switch (peek_reg(tracee, ORIGINAL, SYSARG_1)) {
+	    case SYS_ACCEPT:
+	    case SYS_ACCEPT4:
+		/* Nothing special to do if no sockaddr was specified.  */
 		sock_addr = PEEK_WORD(SYSARG_ADDR(2));
-		size_addr = PEEK_WORD(SYSARG_ADDR(3));
-		max_size  = peek_reg(tracee, MODIFIED, SYSARG_6);
+		if (sock_addr == 0)
+		    goto end;
+		/* Fall through.  */
+	    case SYS_GETSOCKNAME:
+	    case SYS_GETPEERNAME:
+		/* Handle these cases below.  */
+		status = 1;
+		break;
 
-		status = translate_socketcall_exit(tracee, sock_addr, size_addr, max_size);
-		if (status < 0)
-			break;
+	    case SYS_BIND:
+	    case SYS_CONNECT:
+		/* Restore the initial parameters: this memory was
+		 * overwritten at the enter stage.  Remember: POKE_WORD
+		 * puts -errno in status and breaks if an error
+		 * occured.  */
+		POKE_WORD(SYSARG_ADDR(2),
+			  peek_reg(tracee, MODIFIED, SYSARG_5));
+		POKE_WORD(SYSARG_ADDR(3),
+			  peek_reg(tracee, MODIFIED, SYSARG_6));
 
-		/* Don't overwrite the syscall result.  */
+		status = 0;
+		break;
+
+	    default:
+		status = 0;
+		break;
+	    }
+
+	    /* Error reported by the kernel or there's nothing else to do.  */
+	    if ((int) syscall_result < 0 || status == 0)
 		goto end;
+
+	    /* An error occured in SYS_BIND or SYS_CONNECT.  */
+	    if (status < 0)
+		break;
+
+	    /* Remember: PEEK_WORD puts -errno in status and breaks if an
+	     * error occured.  */
+	    sock_addr = PEEK_WORD(SYSARG_ADDR(2));
+	    size_addr = PEEK_WORD(SYSARG_ADDR(3));
+	    max_size = peek_reg(tracee, MODIFIED, SYSARG_6);
+
+	    status =
+		translate_socketcall_exit(tracee, sock_addr,
+					  size_addr, max_size);
+	    if (status < 0)
+		break;
+
+	    /* Don't overwrite the syscall result.  */
+	    goto end;
 	}
 
 #undef SYSARG_ADDR
 #undef PEEK_WORD
 #undef POKE_WORD
 
-	case PR_fchdir:
-	case PR_chdir:
-		/* These syscalls are fully emulated, see enter.c for details
-		 * (like errors).  */
-		status = 0;
+    case PR_fchdir:
+    case PR_chdir:
+	/* These syscalls are fully emulated, see enter.c for details
+	 * (like errors).  */
+	status = 0;
+	break;
+
+    case PR_rename:
+    case PR_renameat:
+    case PR_renameat2:{
+	    char old_path[PATH_MAX];
+	    char new_path[PATH_MAX];
+	    ssize_t old_length;
+	    ssize_t new_length;
+	    Comparison comparison;
+	    Reg old_reg;
+	    Reg new_reg;
+	    char *tmp;
+
+	    /* Error reported by the kernel.  */
+	    if ((int) syscall_result < 0)
+		goto end;
+
+	    if (syscall_number == PR_rename) {
+		old_reg = SYSARG_1;
+		new_reg = SYSARG_2;
+	    } else {
+		old_reg = SYSARG_2;
+		new_reg = SYSARG_4;
+	    }
+
+	    /* Get the old path, then convert it to the same
+	     * "point-of-view" as tracee->fs->cwd (guest).  */
+	    status =
+		read_path(tracee, old_path,
+			  peek_reg(tracee, MODIFIED, old_reg));
+	    if (status < 0)
 		break;
 
-	case PR_rename:
-	case PR_renameat:
-	case PR_renameat2: {
-		char old_path[PATH_MAX];
-		char new_path[PATH_MAX];
-		ssize_t old_length;
-		ssize_t new_length;
-		Comparison comparison;
-		Reg old_reg;
-		Reg new_reg;
-		char *tmp;
+	    status = detranslate_path(tracee, old_path, NULL);
+	    if (status < 0)
+		break;
+	    old_length =
+		(status > 0 ? status - 1 : (ssize_t) strlen(old_path));
 
-		/* Error reported by the kernel.  */
-		if ((int) syscall_result < 0)
-			goto end;
-
-		if (syscall_number == PR_rename) {
-			old_reg = SYSARG_1;
-			new_reg = SYSARG_2;
-		}
-		else {
-			old_reg = SYSARG_2;
-			new_reg = SYSARG_4;
-		}
-
-		/* Get the old path, then convert it to the same
-		 * "point-of-view" as tracee->fs->cwd (guest).  */
-		status = read_path(tracee, old_path, peek_reg(tracee, MODIFIED, old_reg));
-		if (status < 0)
-			break;
-
-		status = detranslate_path(tracee, old_path, NULL);
-		if (status < 0)
-			break;
-		old_length = (status > 0 ? status - 1 : (ssize_t) strlen(old_path));
-
-		/* Nothing special to do if the moved path is not the
-		 * current working directory.  */
-		comparison = compare_paths(old_path, tracee->fs->cwd);
-		if (comparison != PATH1_IS_PREFIX && comparison != PATHS_ARE_EQUAL) {
-			status = 0;
-			break;
-		}
-
-		/* Get the new path, then convert it to the same
-		 * "point-of-view" as tracee->fs->cwd (guest).  */
-		status = read_path(tracee, new_path, peek_reg(tracee, MODIFIED, new_reg));
-		if (status < 0)
-			break;
-
-		status = detranslate_path(tracee, new_path, NULL);
-		if (status < 0)
-			break;
-		new_length = (status > 0 ? status - 1 : (ssize_t) strlen(new_path));
-
-		/* Sanity check.  */
-		if (strlen(tracee->fs->cwd) >= PATH_MAX) {
-			status = 0;
-			break;
-		}
-		strcpy(old_path, tracee->fs->cwd);
-
-		/* Update the virtual current working directory.  */
-		substitute_path_prefix(old_path, old_length, new_path, new_length);
-
-		tmp = talloc_strdup(tracee->fs, old_path);
-		if (tmp == NULL) {
-			status = -ENOMEM;
-			break;
-		}
-
-		TALLOC_FREE(tracee->fs->cwd);
-		tracee->fs->cwd = tmp;
-
+	    /* Nothing special to do if the moved path is not the
+	     * current working directory.  */
+	    comparison = compare_paths(old_path, tracee->fs->cwd);
+	    if (comparison != PATH1_IS_PREFIX
+		&& comparison != PATHS_ARE_EQUAL) {
 		status = 0;
 		break;
+	    }
+
+	    /* Get the new path, then convert it to the same
+	     * "point-of-view" as tracee->fs->cwd (guest).  */
+	    status =
+		read_path(tracee, new_path,
+			  peek_reg(tracee, MODIFIED, new_reg));
+	    if (status < 0)
+		break;
+
+	    status = detranslate_path(tracee, new_path, NULL);
+	    if (status < 0)
+		break;
+	    new_length =
+		(status > 0 ? status - 1 : (ssize_t) strlen(new_path));
+
+	    /* Sanity check.  */
+	    if (strlen(tracee->fs->cwd) >= PATH_MAX) {
+		status = 0;
+		break;
+	    }
+	    strcpy(old_path, tracee->fs->cwd);
+
+	    /* Update the virtual current working directory.  */
+	    substitute_path_prefix(old_path, old_length,
+				   new_path, new_length);
+
+	    tmp = talloc_strdup(tracee->fs, old_path);
+	    if (tmp == NULL) {
+		status = -ENOMEM;
+		break;
+	    }
+
+	    TALLOC_FREE(tracee->fs->cwd);
+	    tracee->fs->cwd = tmp;
+
+	    status = 0;
+	    break;
 	}
 
-	case PR_readlink:
-	case PR_readlinkat: {
-		char referee[PATH_MAX];
-		char referer[PATH_MAX];
-		size_t old_size;
-		size_t new_size;
-		size_t max_size;
-		word_t input;
-		word_t output;
+    case PR_readlink:
+    case PR_readlinkat:{
+	    char referee[PATH_MAX];
+	    char referer[PATH_MAX];
+	    size_t old_size;
+	    size_t new_size;
+	    size_t max_size;
+	    word_t input;
+	    word_t output;
 
-		/* Error reported by the kernel.  */
-		if ((int) syscall_result < 0)
-			goto end;
+	    /* Error reported by the kernel.  */
+	    if ((int) syscall_result < 0)
+		goto end;
 
-		old_size = syscall_result;
+	    old_size = syscall_result;
 
-		if (syscall_number == PR_readlink) {
-			output   = peek_reg(tracee, ORIGINAL, SYSARG_2);
-			max_size = peek_reg(tracee, ORIGINAL, SYSARG_3);
-			input    = peek_reg(tracee, MODIFIED, SYSARG_1);
-		}
-		else {
-			output   = peek_reg(tracee, ORIGINAL,  SYSARG_3);
-			max_size = peek_reg(tracee, ORIGINAL, SYSARG_4);
-			input    = peek_reg(tracee, MODIFIED, SYSARG_2);
-		}
+	    if (syscall_number == PR_readlink) {
+		output = peek_reg(tracee, ORIGINAL, SYSARG_2);
+		max_size = peek_reg(tracee, ORIGINAL, SYSARG_3);
+		input = peek_reg(tracee, MODIFIED, SYSARG_1);
+	    } else {
+		output = peek_reg(tracee, ORIGINAL, SYSARG_3);
+		max_size = peek_reg(tracee, ORIGINAL, SYSARG_4);
+		input = peek_reg(tracee, MODIFIED, SYSARG_2);
+	    }
 
-		if (max_size > PATH_MAX)
-			max_size = PATH_MAX;
+	    if (max_size > PATH_MAX)
+		max_size = PATH_MAX;
 
-		if (max_size == 0) {
-			status = -EINVAL;
-			break;
-		}
-
-		/* The kernel does NOT put the NULL terminating byte for
-		 * readlink(2).  */
-		status = read_data(tracee, referee, output, old_size);
-		if (status < 0)
-			break;
-		referee[old_size] = '\0';
-
-		/* Not optimal but safe (path is fully translated).  */
-		status = read_path(tracee, referer, input);
-		if (status < 0)
-			break;
-
-		if (status >= PATH_MAX) {
-			status = -ENAMETOOLONG;
-			break;
-		}
-
-		status = detranslate_path(tracee, referee, referer);
-		if (status < 0)
-			break;
-
-		/* The original path doesn't require any transformation, i.e
-		 * it is a symetric binding.  */
-		if (status == 0)
-			goto end;
-
-		/* Overwrite the path.  Note: the output buffer might be
-		 * initialized with zeros but it was updated with the kernel
-		 * result, and then with the detranslated result.  This later
-		 * might be shorter than the former, so it's safier to add a
-		 * NULL terminating byte when possible.  This problem was
-		 * exposed by IDA Demo 6.3.  */
-		if ((size_t) status < max_size) {
-			new_size = status - 1;
-			status = write_data(tracee, output, referee, status);
-		}
-		else {
-			new_size = max_size;
-			status = write_data(tracee, output, referee, max_size);
-		}
-		if (status < 0)
-			break;
-
-		/* The value of "status" is used to update the returned value
-		 * in translate_syscall_exit().  */
-		status = new_size;
+	    if (max_size == 0) {
+		status = -EINVAL;
 		break;
+	    }
+
+	    /* The kernel does NOT put the NULL terminating byte for
+	     * readlink(2).  */
+	    status = read_data(tracee, referee, output, old_size);
+	    if (status < 0)
+		break;
+	    referee[old_size] = '\0';
+
+	    /* Not optimal but safe (path is fully translated).  */
+	    status = read_path(tracee, referer, input);
+	    if (status < 0)
+		break;
+
+	    if (status >= PATH_MAX) {
+		status = -ENAMETOOLONG;
+		break;
+	    }
+
+	    /* A buffer the kernel filled may hold a target cut short.
+	     * The host path is longer than the guest path it stands
+	     * for, so detranslating the cut one would report a shorter,
+	     * wrong guest path, and callers that grow their buffer only
+	     * when readlink(2) fills it (libglnx, bubblewrap...) would
+	     * take it as complete.  Read the whole target instead.  */
+	    if (old_size == max_size) {
+		ssize_t size =
+		    readlink(referer, referee, sizeof(referee) - 1);
+
+		if (size > 0)
+		    referee[size] = '\0';
+	    }
+
+	    status = detranslate_path(tracee, referee, referer);
+	    if (status < 0)
+		break;
+
+	    /* The original path doesn't require any transformation, i.e
+	     * it is a symetric binding.  */
+	    if (status == 0)
+		goto end;
+
+	    /* Overwrite the path.  Note: the output buffer might be
+	     * initialized with zeros but it was updated with the kernel
+	     * result, and then with the detranslated result.  This later
+	     * might be shorter than the former, so it's safier to add a
+	     * NULL terminating byte when possible.  This problem was
+	     * exposed by IDA Demo 6.3.  */
+	    if ((size_t) status < max_size) {
+		new_size = status - 1;
+		status = write_data(tracee, output, referee, status);
+	    } else {
+		new_size = max_size;
+		status = write_data(tracee, output, referee, max_size);
+	    }
+	    if (status < 0)
+		break;
+
+	    /* The value of "status" is used to update the returned value
+	     * in translate_syscall_exit().  */
+	    status = new_size;
+	    break;
 	}
 
 #if defined(ARCH_X86_64)
-	case PR_uname: {
-		struct utsname utsname;
-		word_t address;
-		size_t size;
+    case PR_uname:{
+	    struct utsname utsname;
+	    word_t address;
+	    size_t size;
 
-		if (get_abi(tracee) != ABI_2)
-			goto end;
+	    if (get_abi(tracee) != ABI_2)
+		goto end;
 
-		/* Error reported by the kernel.  */
-		if ((int) syscall_result < 0)
-			goto end;
+	    /* Error reported by the kernel.  */
+	    if ((int) syscall_result < 0)
+		goto end;
 
-		address = peek_reg(tracee, ORIGINAL, SYSARG_1);
+	    address = peek_reg(tracee, ORIGINAL, SYSARG_1);
 
-		status = read_data(tracee, &utsname, address, sizeof(utsname));
-		if (status < 0)
-			break;
-
-		/* Some 32-bit programs like package managers can be
-		 * confused when the kernel reports "x86_64".  */
-		size = sizeof(utsname.machine);
-		strncpy(utsname.machine, "i686", size);
-		utsname.machine[size - 1] = '\0';
-
-		status = write_data(tracee, address, &utsname, sizeof(utsname));
-		if (status < 0)
-			break;
-
-		status = 0;
+	    status = read_data(tracee, &utsname, address, sizeof(utsname));
+	    if (status < 0)
 		break;
+
+	    /* Some 32-bit programs like package managers can be
+	     * confused when the kernel reports "x86_64".  */
+	    size = sizeof(utsname.machine);
+	    strncpy(utsname.machine, "i686", size);
+	    utsname.machine[size - 1] = '\0';
+
+	    status =
+		write_data(tracee, address, &utsname, sizeof(utsname));
+	    if (status < 0)
+		break;
+
+	    status = 0;
+	    break;
 	}
 #endif
 
-	case PR_execve:
-		translate_execve_exit(tracee);
+    case PR_execve:
+	translate_execve_exit(tracee);
+	goto end;
+
+    case PR_prctl:{
+	    word_t option = peek_reg(tracee, ORIGINAL, SYSARG_1);
+
+	    /* PR_GET_AUXV copies out the vector the kernel saved
+	     * for the loader: make its AT_EXECFN name the program,
+	     * as the loader did on the stack.  */
+	    if (option == PR_GET_AUXV) {
+		uint8_t vectors[4096];
+		word_t address;
+		size_t size;
+
+		if ((int) syscall_result < 0 || tracee->execfn_addr == 0)
+		    goto end;
+
+		/* The result is the size of the whole vector, which is
+		 * copied out only as far as the buffer goes.  */
+		address = peek_reg(tracee, ORIGINAL, SYSARG_2);
+		size =
+		    MIN(syscall_result,
+			peek_reg(tracee, ORIGINAL, SYSARG_3));
+		size = MIN(size, sizeof(vectors));
+
+		status = read_data(tracee, vectors, address, size);
+		if (status < 0 || !fix_up_execfn(tracee, vectors, size))
+		    goto end;
+
+		(void) write_data(tracee, address, vectors, size);
 		goto end;
+	    }
 
-	case PR_ptrace:
-		status = translate_ptrace_exit(tracee);
+	    /* See translate_syscall_enter().  */
+	    if (option == PR_GET_NO_NEW_PRIVS) {
+		if (get_sysnum(tracee, MODIFIED) != PR_void)
+		    goto end;
+
+		status = tracee->no_new_privs ? 1 : 0;
 		break;
+	    }
 
-	case PR_wait4:
-	case PR_waitpid: {
-		bool set_result = true;
-		if (tracee->as_ptracer.waits_in != WAITS_IN_PROOT)
-			goto end;
-
-		status = translate_wait_exit(tracee, &set_result);
-		if (!set_result)
-			goto end;
-		break;
+	    goto end;
 	}
 
-	case PR_setrlimit:
-	case PR_prlimit64:
-		/* Error reported by the kernel.  */
-		if ((int) syscall_result < 0)
-			goto end;
+    case PR_ptrace:
+	status = translate_ptrace_exit(tracee);
+	break;
 
-		status = translate_setrlimit_exit(tracee, syscall_number == PR_prlimit64);
-		if (status < 0)
-			break;
-
-		/* Don't overwrite the syscall result.  */
+    case PR_wait4:
+    case PR_waitpid:{
+	    bool set_result = true;
+	    if (tracee->as_ptracer.waits_in != WAITS_IN_PROOT)
 		goto end;
 
-	default:
+	    status = translate_wait_exit(tracee, &set_result);
+	    if (!set_result)
 		goto end;
+	    break;
 	}
 
-	poke_reg(tracee, SYSARG_RESULT, (word_t) status);
+    case PR_setrlimit:
+    case PR_prlimit64:
+	/* Error reported by the kernel.  */
+	if ((int) syscall_result < 0)
+	    goto end;
 
-end:
-	status = notify_extensions(tracee, SYSCALL_EXIT_END, 0, 0);
+	status =
+	    translate_setrlimit_exit(tracee,
+				     syscall_number == PR_prlimit64);
 	if (status < 0)
-		poke_reg(tracee, SYSARG_RESULT, (word_t) status);
+	    break;
+
+	/* Don't overwrite the syscall result.  */
+	goto end;
+
+    default:
+	goto end;
+    }
+
+    poke_reg(tracee, SYSARG_RESULT, (word_t) status);
+
+  end:
+    status = notify_extensions(tracee, SYSCALL_EXIT_END, 0, 0);
+    if (status < 0)
+	poke_reg(tracee, SYSARG_RESULT, (word_t) status);
 }

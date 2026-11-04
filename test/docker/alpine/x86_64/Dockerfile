@@ -1,10 +1,11 @@
-FROM proot-me/proot:alpine
+FROM ghcr.io/proot-me/proot:alpine
 
-RUN apk update && \
-    apk upgrade && \
-    apk add \
+USER root
+
+RUN apk add --no-cache \
       bash \
       bsd-compat-headers \
+      check-dev \
       coreutils \
       git \
       grep \
@@ -15,10 +16,12 @@ RUN apk update && \
       make \
       mcookie \
       musl-dev \
-      python3-dev \
+      protobuf-c-dev \
       py3-docutils \
+      python3-dev \
       strace \
       swig \
       talloc-dev \
       uthash-dev
 
+USER proot
