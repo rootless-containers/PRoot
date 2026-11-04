@@ -24,7 +24,9 @@
 #include <stdbool.h>		/* bool, true, false,  */
 #include <linux/limits.h>	/* ARG_MAX, PATH_MAX, */
 #include <string.h>		/* str*(3), */
+#if !defined(__GLIBC__)
 #include <libgen.h>		/* basename(3), */
+#endif
 #include <talloc.h>		/* talloc*,  */
 #include <stdlib.h>		/* exit(3), EXIT_*, strtol(3), {g,s}etenv(3), */
 #include <assert.h>		/* assert(3),  */
