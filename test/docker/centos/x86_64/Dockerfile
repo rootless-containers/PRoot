@@ -16,6 +16,7 @@ RUN dnf install -y \
       lzop \
       make \
       pkg-config \
+      protobuf-c-devel \
       python3-devel \
       strace \
       swig \
