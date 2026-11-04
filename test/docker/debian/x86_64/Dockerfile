@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       docutils-common \
       git \
       libarchive-dev \
+      libprotobuf-c-dev \
       libtalloc-dev \
       make \
       pkg-config \

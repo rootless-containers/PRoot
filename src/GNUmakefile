@@ -1,6 +1,8 @@
 # If you want to build outside of the source tree, use the -f option:
 #     make -f ${SOMEWHERE}/proot/src/GNUmakefile
 
+PERSISTENT_CHOWN := 1
+
 # the VPATH variable must point to the actual makefile directory
 VPATH := $(dir $(lastword $(MAKEFILE_LIST)))
 SRC    = $(dir $(firstword $(MAKEFILE_LIST)))
@@ -41,6 +43,12 @@ HAS_PYTHON_CONFIG := $(shell ${PYTHON}-config --ldflags ${PYTHON_EMBED} 2>/dev/n
 endif
 
 CPPFLAGS += -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -I. -I$(VPATH) -I$(VPATH)/../lib/uthash/include
+ifdef PERSISTENT_CHOWN
+	CPPFLAGS += -DPERSISTENT_CHOWN
+	CPPFLAGS += $(shell ${PKG_CONFIG} --cflags libprotobuf-c)
+	HAS_ATTR_XATTR := $(shell if [ -f /usr/include/attr/xattr.h ]; then echo -DHAS_ATTR_XATTR; fi)
+	CPPFLAGS += ${HAS_ATTR_XATTR}
+endif
 CFLAGS   += -g -Wall -Wextra -O2
 
 # pkg-config silently returns an empty string for --cflags/--libs when it
@@ -59,6 +67,9 @@ endif
 CFLAGS   += $(shell ${PKG_CONFIG} --cflags talloc)
 LDFLAGS  += -Wl,-z,noexecstack
 LDFLAGS  += $(shell ${PKG_CONFIG} --libs talloc)
+ifdef PERSISTENT_CHOWN
+	LDFLAGS += $(shell ${PKG_CONFIG} --libs libprotobuf-c)
+endif
 
 ifneq ($(findstring -static,$(LDFLAGS)),)
 CARE_LDFLAGS  = -Wl,--start-group $(shell ${PKG_CONFIG} --libs --static libarchive) \
@@ -108,6 +119,10 @@ OBJECTS += \
 	extension/portmap/portmap.o \
 	extension/portmap/map.o \
 	loader/loader-wrapped.o
+
+ifdef PERSISTENT_CHOWN
+	OBJECTS += rootlesscontainers/rootlesscontainers.pb-c.o
+endif
 
 define define_from_arch.h
 $2$1 := $(shell $(CC) $1 -E -dM -DNO_LIBC_HEADER $(SRC)/arch.h | grep -w $2 | cut -f 3 -d ' ')

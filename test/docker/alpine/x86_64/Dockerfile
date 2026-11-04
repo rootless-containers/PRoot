@@ -16,6 +16,7 @@ RUN apk add --no-cache \
       make \
       mcookie \
       musl-dev \
+      protobuf-c-dev \
       py3-docutils \
       python3-dev \
       strace \
