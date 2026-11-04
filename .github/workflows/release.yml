@@ -37,7 +37,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -qq libarchive-dev libtalloc-dev pkg-config uthash-dev lzop g++
+          sudo apt-get install -qq libarchive-dev libprotobuf-c-dev libtalloc-dev pkg-config uthash-dev lzop g++
 
       - name: Build static proot and care binaries
         run: |

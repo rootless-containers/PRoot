@@ -53,7 +53,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -qq check libtalloc-dev pkg-config
+          sudo apt-get install -qq check libprotobuf-c-dev libtalloc-dev pkg-config
 
       - name: Run the libcheck suite
         run: make -C test/unit check
@@ -77,7 +77,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -qq bats clang-tools curl gdb lcov libarchive-dev libtalloc-dev pkg-config sloccount strace swig uthash-dev python3-dev lzop
+          sudo apt-get install -qq bats clang-tools curl gdb lcov libarchive-dev libprotobuf-c-dev libtalloc-dev pkg-config sloccount strace swig uthash-dev python3-dev lzop
 
       - name: Gather analytics
         run: sloccount --details .
@@ -130,7 +130,7 @@ jobs:
       - name: Install cross toolchain and target libraries
         run: |
           sudo apt-get install -qq -y crossbuild-essential-arm64 pkg-config uthash-dev qemu-user \
-            libarchive-dev:arm64 libtalloc-dev:arm64
+            libarchive-dev:arm64 libprotobuf-c-dev:arm64 libtalloc-dev:arm64
 
       - name: Cross-build proot and care for aarch64
         run: |
